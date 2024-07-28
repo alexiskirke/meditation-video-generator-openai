@@ -1,0 +1,15 @@
+include README.md
+include LICENSE
+include meditation_video_generator/ambient_files_urls.txt
+exclude meditation_video_generator/.gitattributes
+exclude test_meditation_video_generator.py
+exclude test_mp3_merger.py
+exclude test_mp3_mixer.py
+exclude venv/
+exclude live/
+exclude archive/
+exclude ambient_files_prev/
+recursive-exclude ambient_files_prev *
+recursive-exclude venv *
+recursive-exclude live *
+recursive-exclude archive *
