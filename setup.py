@@ -2,11 +2,11 @@ from setuptools import setup, find_packages
 
 setup(
     name='meditation-video-generator-openai',
-    version='1.0.4',
+    version='1.1.1',
     packages=find_packages(),
     include_package_data=True,
     install_requires=[
-        'pedalboard', 'pydub', 'openai','requests', 'moviepy'
+        'pedalboard', 'pydub', 'openai','requests', 'moviepy', 'pillow'
     ],
     author='Alexis Kirke',
     author_email='alexiskirke2@gmail.com',

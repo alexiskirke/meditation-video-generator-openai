@@ -1,5 +1,6 @@
 import pytest
 from pydub import AudioSegment
+from pydub.generators import Sine
 from pydub.generators import WhiteNoise
 from meditation_video_generator.mp3_mixer import MP3Mixer
 import os
@@ -47,11 +48,14 @@ def test_edge_cases():
 
     # Create fake MP3 files for overlay ambient
     with open(f"{test_dir}/test.mp3", "wb") as f:
-        WhiteNoise().to_audio_segment(duration=1000).export(f, format="mp3")
+        # one second tone 440 Hz as audiosegment to mp3 to f
+        Sine(440).to_audio_segment(duration=1000).export(f, format="mp3")
     with open(f"{test_dir}/test2.mp3", "wb") as f:
-        WhiteNoise().to_audio_segment(duration=1000).export(f, format="mp3")
+        #WhiteNoise().to_audio_segment(duration=1000).export(f, format="mp3")
+        Sine(440).to_audio_segment(duration=1000).export(f, format="mp3")
     with open(f"{test_dir}/test3_shorter.mp3", "wb") as f:
-        WhiteNoise().to_audio_segment(duration=500).export(f, format="mp3")
+        Sine(440).to_audio_segment(duration=500).export(f, format="mp3")
+        #WhiteNoise().to_audio_segment(duration=500).export(f, format="mp3")
     with open(f"{test_dir}/test4_silent.mp3", "wb") as f:
         AudioSegment.silent(duration=1000).export(f, format="mp3")
 
@@ -92,7 +96,7 @@ def test_edge_cases():
     # 6. Test for fade in
     mp3_mixer.fade_in_time = 1
     spoken_file_a = f"{test_dir}/test.mp3"
-    ambient_file_b = f"{test_dir}/test2.mp3"
+    ambient_file_b = f"{test_dir}/test.mp3"
     result = mp3_mixer.overlay_ambient(spoken_file_a=spoken_file_a, ambient_file_b=ambient_file_b)
     assert result.duration_seconds == 1.0
 
@@ -111,7 +115,9 @@ def test_edge_cases():
     # 9. Test fade in makes first half of file lower energy than second half of file
     mp3_mixer.fade_in_time = 1
     mp3_mixer.fade_out_time = 0
-    spoken_file_a = f"{test_dir}/test4_silent.mp3"
+    #mp3_mixer.power_ratio = 100 #mp3_mixer.power_ratio/100  # lower_voice part
+    # spoken_file_a = f"{test_dir}/test4_silent.mp3"
+    spoken_file_a = f"{test_dir}/test.mp3"
     ambient_file_b = f"{test_dir}/test2.mp3"
     result = mp3_mixer.overlay_ambient(spoken_file_a=spoken_file_a, ambient_file_b=ambient_file_b)
     result_np = np.array(result.get_array_of_samples())
@@ -233,6 +239,11 @@ def test_edge_cases():
     with pytest.raises(FileNotFoundError):
         mp3_mixer.mix_audio()
     os.rmdir(sounds_dir)
+
+    # 25. Test for valid power ratio values
+    mp3_mixer = MP3Mixer(mp3_file=mp3_file, power_ratio=-1)
+    with pytest.raises(ValueError):
+        mp3_mixer.mix_audio()
 
     # end of tests
     # empty and remove the test directory

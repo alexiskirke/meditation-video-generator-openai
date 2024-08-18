@@ -5,13 +5,14 @@ The `MeditationVideoGenerator` class is a comprehensive solution for creating me
 ## Installation
 
 ```bash
-pip install meditation-video-generator
+pip install meditation-video-generator-openai
 ```
 
 ## Usage
 
 To use the `MeditationVideoGenerator` class, you need to initialize it with various parameters and then run the pipeline to generate the meditation video.
 The generation also displays up to 30 suggested keywords you can use if uploading to social media.
+A banner is placed at the bottom of the generated image with a title that summarises your topic.
 The system uses copyright-free (or copyright-YouTube-authorised) music/sound extracts unless you specify binaural beats.
 This music is downloaded the first time you create the MeditationVideoGenerator object.
 Note: when the meditation has been generated, the working directory is left in place but can be manually deleted. The video and audio file are copied into your own working directory.
@@ -20,7 +21,7 @@ Note: when the meditation has been generated, the working directory is left in p
 ## Known Issues
 
 GPT-4o is a statistical model and has therefore occasionally returned JSON that is not parsable by this code - this will raise and error and abort. 
-Similarly any paramaters which attempt to control the elements returned from GPT-4o may not give the precise results expected.
+Similarly, any parameters which attempt to control the elements returned from GPT-4o may not give the precise results expected.
 OpenAI have a rate limiter on their API. For example, if you create a meditation with dozens of text parts, then during synthesis you may get rate limited and the process aborts.
 Sometimes a perfectly innocent meditation topic can trigger OpenAI's content filter for picture generation. This will cause the meditation to abort. (But you can re-run from that point on by adjusting the pipeline, see below.)
 
@@ -45,7 +46,6 @@ Sometimes a perfectly innocent meditation topic can trigger OpenAI's content fil
 - `binaural: bool` - If True, generate binaural beats.
 - `all_voices: bool` - If True, choose from all available voices (not just the "best" two).
 - `binaural_fade_out_duration: float` - Duration of the fade-out at the end of the binaural beats.
-- `binaural_file_gain_db: int` - How much binaural beats should be quieter than the input voice audio.
 - `start_beat_freq: float` - Initial frequency difference for the binaural effect.
 - `end_beat_freq: float` - Final frequency difference for the binaural effect.
 - `base_freq: float` - Base frequency for the binaural beats.
@@ -53,7 +53,13 @@ Sometimes a perfectly innocent meditation topic can trigger OpenAI's content fil
 - `num_samples_to_chop: int` - Number of samples to chop off the beginning of the ambient sound files.
 - `fade_in_time: float` - Duration of the fade-in at the beginning of the ambient sound overlay.
 - `fade_out_time: float` - Duration of the fade-out at the end of the ambient sound overlay.
-- `ambient_file_gain_db: int` - How much ambient sound should be quieter than the input voice audio.
+- `expansion_size: int` - Size of the expansion for the text, if `expand_on_section` is `True`.
+- `force_voice: str` - Allows user to force selection of OpenAI voice, e.g., `onyx`.
+- `image_background_opacity: float` - Opacity of the background image (0 = transparent, 1 = opaque).
+- `banner_at_bottom: bool` - If `True`, the banner is at the bottom of the image.
+- `banner_height_ratio: float` - Ratio of the banner height to the image height.
+- `max_banner_words: int` - Maximum number of words in the banner.
+- `power_ratio: float` - Ratio (higher means louder voice) of the power of the binaural beats or ambient to the power of the voice audio.
 
 ### Example Usages
 

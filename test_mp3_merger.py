@@ -1,6 +1,6 @@
 import pytest
 from pydub import AudioSegment
-from pydub.generators import WhiteNoise
+from pydub.generators import WhiteNoise, Sine
 from meditation_video_generator.mp3_merger import MP3Merger
 import os
 import numpy as np
@@ -142,6 +142,20 @@ def test_edge_cases():
     with pytest.raises(ValueError, match="Balance for even segments must be between -1 and 1."):
         mp3_merger = MP3Merger(["test.mp3", "test2.mp3"], duration=10, balance_even=2)
         mp3_merger.merge()
+
+    # 8. test when total voice duration is greater than the silence duration
+    # generate 6 11 second files of sine waves
+    for i in range(6):
+        with open(f"merge_test{i}.mp3", "wb") as f:
+            Sine(440).to_audio_segment(duration=11000).export(f, format="mp3")
+    # check value error is raised and includes text: Total duration of input MP3 files exceeds the target duration.
+    with pytest.raises(ValueError, match="Total duration of input MP3 files exceeds the target duration."):
+        mp3_merger = MP3Merger([f"merge_test{i}.mp3" for i in range(6)], duration=60)
+        mp3_merger.merge()
+    # delete test files
+    for i in range(6):
+        os.remove(f"merge_test{i}.mp3")
+
 
     # Delete test files
     os.remove("test.mp3")

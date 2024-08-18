@@ -50,7 +50,7 @@ def test_meditation_video_generator_live():
 
     # 1. test size of tiny generated subsections
     mvg = MeditationVideoGenerator(api_key=KEY, force_working_dir_overwrite=True,
-                                   length=1, num_sentences=1, expand_on_section=False,
+                                   length=1, num_sentences=2, expand_on_section=False,
                                    limit_parts=1)
     # uses samples since gpt is non-deterministic
     subsections_samples = []
@@ -65,10 +65,10 @@ def test_meditation_video_generator_live():
     # raise a warning if there are not limit_part + 2 subsections, but it's not fatal
     if not sum([len(s) for s in subsections_samples]) != 3*num_samples:
         print("Warning: There are not limit_part + 2 subsections. But there are ", [len(s) for s in subsections_samples])
-    # check the average number of sentences across all subsections is approximately 1
+    # check the average number of sentences across all subsections is approximately 2
     # join subsections_samples into one list of nums
     subsections = [item for sublist in subsections_samples for item in sublist]
-    assert 1 <= np.mean([len(s.split(".")) for s in subsections]) < 3
+    assert 2 <= np.mean([len(s.split(".")) for s in subsections]) < 4
 
     # 2. check that extended versions are longer.
     prev_subsections = subsections
@@ -97,10 +97,10 @@ def test_meditation_video_generator_live():
     if not sum([len(s) for s in subsections_samples]) != 3 * num_samples:
         print("Warning: There are not limit_part + 2 subsections. But there are ",
               [len(s) for s in subsections_samples])
-    # check the average number of sentences across all subsections is approximately 1
+    # check the average number of sentences across all subsections is approximately 3
     # join subsections_samples into one list of nums
     subsections = [item for sublist in subsections_samples for item in sublist]
-    assert 2 <= np.mean([len(s.split(".")) for s in subsections]) < 4
+    assert 2 <= np.mean([len(s.split(".")) for s in subsections]) <= 4
 
 
     # 4. check that doing an affirmation with free text works
@@ -405,8 +405,59 @@ def test_meditation_video_generator_edge_cases():
     with pytest.raises(ValueError, match="Error: translate_text - target_language must be a non-empty string."):
         mvg.translate_text(text="test", target_language=" ")
 
+    # TESTS OF THE BANNER GENERATION SYSTEM
+    # add_banner_with_text()
+    # image_path: str, banner_text: str, output_path: str
+    # 38. Check add_banner_with_text() raises for invalid image_path f"Error: add_banner_with_text - Image file does not exist: {image_path}"
+    mvg = MeditationVideoGenerator(force_working_dir_overwrite=True)
+    image_path = "i_do_not_exist.jpg"
+    banner_text = "test"
+    output_path = "output.jpg"
+    with pytest.raises(FileNotFoundError, match=f"Error: add_banner_with_text - Image file does not exist: {image_path}"):
+        mvg.add_banner_with_text(image_path, banner_text, output_path)
+
+    # 39. check image_path is a valid image file
+    # Error: add_banner_with_text - Failed to load image file
+    # create a text file and name it as a jpg
+    with open(os.path.join(mvg.working_directory, "Mindfulness_meditation_image.jpg"), "w") as f:
+        f.write("test")
+    image_path = os.path.join(mvg.working_directory, "Mindfulness_meditation_image.jpg")
+    with pytest.raises(ValueError, match="Error: add_banner_with_text - Failed to load image file"):
+        mvg.add_banner_with_text(image_path, banner_text, output_path)
+
+    # 40. check banner_text is a non-empty string
+    # create a 200 x 200 pixel image
+    black_pixel = np.zeros((200, 200, 3), dtype=np.uint8)
+    image_path = os.path.join(mvg.working_directory, "Mindfulness_meditation_image.jpg")
+    black_pixel = ImageClip(black_pixel)
+    black_pixel.save_frame(image_path)
+    banner_text = ""
+    with pytest.raises(ValueError, match="banner text is empty"):
+        mvg.add_banner_with_text(image_path, banner_text, output_path)
+
+    # 41. check image not too small
+    black_pixel = np.zeros((10, 10, 3), dtype=np.uint8)
+    image_path = os.path.join(mvg.working_directory, "Mindfulness_meditation_image.jpg")
+    black_pixel = ImageClip(black_pixel)
+    black_pixel.save_frame(image_path)
+    banner_text = ""
+    with pytest.raises(ValueError, match="Image dimensions too small"):
+        mvg.add_banner_with_text(image_path, banner_text, output_path)
+    # 42. check self.banner_height_ratio is valid - LEAVE OUT - Too hard to simulate
+    # 43. check self.banner_font_size is valid - LEAVE OUT- Too hard to simulate
+    # 44. check output path directory exists
+    image_path = os.path.join(mvg.working_directory, "Mindfulness_meditation_image.jpg")
+    black_pixel = np.zeros((200, 200, 3), dtype=np.uint8)
+    black_pixel = ImageClip(black_pixel)
+    black_pixel.save_frame(image_path)
+    banner_text = "test"
+    output_path = os.path.join(mvg.working_directory, "does_not_exist", "output.jpg")
+    with pytest.raises(FileNotFoundError, match=f"Error: add_banner_with_text - Output directory does not exist: {os.path.join(mvg.working_directory, 'does_not_exist')}"):
+        mvg.add_banner_with_text(image_path, banner_text, output_path)
+
     # delete the black pixel file
-    #os.remove(os.path.join(mvg.working_directory, "Mindfulness_meditation_image.jpg"))
+    if os.path.exists(os.path.join(mvg.working_directory, "Mindfulness_meditation_image.jpg")):
+        os.remove(os.path.join(mvg.working_directory, "Mindfulness_meditation_image.jpg"))
 
     # remove output.mp3
     if os.path.exists("output.mp3"):
