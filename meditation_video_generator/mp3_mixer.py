@@ -14,7 +14,6 @@ class MP3Mixer:
     :param sounds_dir: Directory containing the ambient sound files (a random file is selected for each mix).
     :param binaural: Flag to enable binaural beats (if False, ambient sound will be mixed).
     :param binaural_fade_out_duration: Duration of the fade-out for binaural beats.
-    :param binaural_file_gain_db: Gain in dB for the binaural beats file.
     :param start_beat_freq: Starting frequency of the binaural beats.
     :param end_beat_freq: Ending frequency of the binaural beats.
     :param base_freq: Base frequency for the binaural beats.
@@ -22,13 +21,12 @@ class MP3Mixer:
     :param num_samples_to_chop: Number of samples to chop from the start of the ambient file (in case of introductions).
     :param fade_in_time: Fade-in time for the ambient file.
     :param fade_out_time: Fade-out time for the ambient file.
-    :param ambient_file_gain_db: Gain in dB for the ambient file.
+    :param power_ratio: Power ratio (higher means louder voice) between the voice and the binaural beats or the ambient sound.
     """
     def __init__(self, mp3_file: str, working_dir: str = "",
                  sounds_dir: str = "ambient_files",
                  binaural: bool = False,
                  binaural_fade_out_duration: float = 4,
-                 binaural_file_gain_db: int = -40,
                  start_beat_freq: float = 5,
                  end_beat_freq: float = 0.5,
                  base_freq: float = 110.0,
@@ -36,14 +34,14 @@ class MP3Mixer:
                  num_samples_to_chop: int = 30000,
                  fade_in_time: float = 4,
                  fade_out_time: float = 4,
-                 ambient_file_gain_db: int = -20
+                 ambient_file_gain_db: int = -20,
+                 power_ratio=None
                  ):
         self.binaural_fade_out_duration = binaural_fade_out_duration
         self.mp3_file = mp3_file
         self.working_dir = working_dir
         self.binaural = binaural
         self.output_file = os.path.join(self.working_dir, "output.mp3")
-        self.binaural_file_gain_db = binaural_file_gain_db
         self.start_beat_freq = start_beat_freq
         self.end_beat_freq = end_beat_freq
         self.base_freq = base_freq
@@ -53,9 +51,40 @@ class MP3Mixer:
         self.fade_in_time = fade_in_time
         self.fade_out_time = fade_out_time
         self.ambient_file_gain_db = ambient_file_gain_db
+        self.power_ratio = power_ratio
 
-    def overlay_ambient(self, spoken_file_a: str, ambient_file_b: str,
-                        ambient_file_b_gain: float = 0) -> AudioSegment:
+    @staticmethod
+    def calculate_average_power(audio_segment: AudioSegment) -> np.ndarray:
+        samples = np.array(audio_segment.get_array_of_samples())
+        channels = audio_segment.channels
+        samples = samples.reshape((-1, channels))
+        # Calculate power for each channel and then average
+        samples = np.asarray(samples, dtype=np.float64)  # ensure it doesn't roll over at limit of int accuracy
+        power_per_channel = np.mean(samples ** 2, axis=0)
+        average_power = np.mean(power_per_channel)
+        return average_power
+
+    def adjust_power_overlay_and_normalise(self, stereo_audio_segment_1 : AudioSegment,
+                                                  stereo_audio_segment_2 : AudioSegment):
+        """
+        Overlay and normalize two stereo audio segments with a given power ratio.
+        :param stereo_audio_segment_1: First stereo audio segment.
+        :param stereo_audio_segment_2: Second stereo audio segment.
+        :return: Normalized stereo audio segment.
+        """
+        # Get the powers of the audio segments
+        power_1 = self.calculate_average_power(stereo_audio_segment_1)
+        power_2 = self.calculate_average_power(stereo_audio_segment_2)
+        # Calculate the scaling factor for audio_segment_1
+        scaling_factor = np.sqrt((power_2 * self.power_ratio) / power_1)
+        # opposite direction to maintain the power ratio
+        adjusted_audio_segment_2 = stereo_audio_segment_2.apply_gain(-10 * np.log10(scaling_factor))
+        # Combine and normalize the audio segments
+        combined = stereo_audio_segment_1.overlay(adjusted_audio_segment_2)
+        final_stereo_audio = combined.normalize()
+        return final_stereo_audio
+
+    def overlay_ambient(self, spoken_file_a: str, ambient_file_b: str) -> AudioSegment:
         if not os.path.exists(spoken_file_a):
             raise FileNotFoundError(f"Spoken audio file {spoken_file_a} not found.")
         if not os.path.exists(ambient_file_b):
@@ -78,8 +107,10 @@ class MP3Mixer:
             ambient_segment_b = ambient_segment_b.fade_out(self.fade_out_time * 1000)
         elif self.fade_out_time < 0:
             raise ValueError("Overlay_ambient: Fade-out time must be greater than 0.")
-
-        overlaid_audio = ambient_segment_b.overlay(spoken_audio_a, gain_during_overlay=ambient_file_b_gain)
+        if not self.power_ratio:
+            self.power_ratio = 7500  # 5000 # increasing this reduces the ambient volume
+        overlaid_audio = self.adjust_power_overlay_and_normalise(spoken_audio_a,
+                                                          ambient_segment_b)
         return overlaid_audio
 
     def generate_binaural_beats(self, duration: int) -> AudioSegment:
@@ -130,7 +161,7 @@ class MP3Mixer:
             sample_width=audio_array.dtype.itemsize,
             channels=2
         )
-        binaural_segment = binaural_segment.fade_out(self.binaural_fade_out_duration * 1000)
+        binaural_segment = binaural_segment.fade_out(self.binaural_fade_out_duration * 10)
         return binaural_segment
 
     def mix_audio(self) -> str:
@@ -140,7 +171,8 @@ class MP3Mixer:
             raise FileNotFoundError(f"Error: {self.mp3_file} does not exist.")
         if not self.mp3_file.endswith(".mp3"):
             raise ValueError(f"Error: {self.mp3_file} is not an MP3 file.")
-
+        if self.power_ratio and self.power_ratio < 0:
+            raise ValueError(f"Power ratio must be positive, not {self.power_ratio}.")
         input_audio = AudioSegment.from_mp3(self.mp3_file)
         duration = input_audio.duration_seconds
         if self.binaural:
@@ -154,7 +186,9 @@ class MP3Mixer:
                 raise ValueError("Error: binaural_fade_out_duration must be greater than or equal to 0.")
 
             binaural_segment = self.generate_binaural_beats(duration)
-            mixed_audio = binaural_segment.overlay(input_audio, gain_during_overlay=self.binaural_file_gain_db)
+            if not self.power_ratio:
+                self.power_ratio = 450000 # 300000 # increasing this reduces the binaural beat volume
+            mixed_audio = self.adjust_power_overlay_and_normalise(input_audio, binaural_segment)
         else:
             my_dir = os.path.dirname(os.path.realpath(__file__))
             sounds_dir = os.path.join(my_dir, self.sounds_dir)
@@ -167,9 +201,10 @@ class MP3Mixer:
             ambient_file = ""
             while not ambient_file.endswith(".mp3"):
                 ambient_file = os.path.join(self.sounds_dir, random.choice(ambient_files))
+                print(f"Selected ambient file: {ambient_file}")
                 ambient_file = os.path.join(my_dir, ambient_file)
 
-            mixed_audio = self.overlay_ambient(self.mp3_file, ambient_file, self.ambient_file_gain_db)
+            mixed_audio = self.overlay_ambient(self.mp3_file, ambient_file)
 
         mixed_audio.export(self.output_file, format="mp3")
         return self.output_file
