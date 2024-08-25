@@ -55,31 +55,54 @@ class MP3Mixer:
 
     @staticmethod
     def calculate_average_power(audio_segment: AudioSegment) -> np.ndarray:
+        # Convert the audio segment into an array of samples
         samples = np.array(audio_segment.get_array_of_samples())
+        # Determine the number of channels in the audio (e.g., 1 for mono, 2 for stereo)
         channels = audio_segment.channels
+        # Reshape the samples array to separate the channels.
+        # If there are multiple channels, the array will have a shape like (n_samples, n_channels).
         samples = samples.reshape((-1, channels))
-        # Calculate power for each channel and then average
-        samples = np.asarray(samples, dtype=np.float64)  # ensure it doesn't roll over at limit of int accuracy
+        # Convert the samples to float64 type to prevent any issues with integer overflow
+        # when performing mathematical operations. This is especially important when
+        # dealing with audio data, as the samples are typically integers (e.g., 16-bit or 32-bit).
+        samples = np.asarray(samples, dtype=np.float64)
+        # Calculate the power (mean squared value) for each channel separately.
+        # This involves squaring each sample value (which gives us the power),
+        # and then taking the mean across all samples in each channel.
         power_per_channel = np.mean(samples ** 2, axis=0)
+        # Compute the average power across all channels.
+        # If the audio is stereo, this will be the mean of the power of the left and right channels.
         average_power = np.mean(power_per_channel)
         return average_power
 
-    def adjust_power_overlay_and_normalise(self, stereo_audio_segment_1 : AudioSegment,
-                                                  stereo_audio_segment_2 : AudioSegment):
+    def adjust_power_overlay_and_normalise(self, stereo_audio_segment_1: AudioSegment,
+                                           stereo_audio_segment_2: AudioSegment) -> AudioSegment:
         """
         Overlay and normalize two stereo audio segments with a given power ratio.
+
         :param stereo_audio_segment_1: First stereo audio segment.
         :param stereo_audio_segment_2: Second stereo audio segment.
-        :return: Normalized stereo audio segment.
+        :return: Normalized stereo audio segment after overlaying and adjusting power.
         """
-        # Get the powers of the audio segments
-        power_1 = self.calculate_average_power(stereo_audio_segment_1)
-        power_2 = self.calculate_average_power(stereo_audio_segment_2)
-        # Calculate the scaling factor for audio_segment_1
+        # Calculate the average power of the first stereo audio segment.
+        power_1 = self.calculate_average_power(stereo_audio_segment_1)  # speech
+        # Calculate the average power of the second stereo audio segment.
+        power_2 = self.calculate_average_power(stereo_audio_segment_2) # (music / binaural)
+        """A larger self.power_ratio increases the voice loudness. But it is a ratio
+        so it will also reduce the music / binaural loudness. 
+        The power of an audio signal is proportional to the square of its amplitude (volume).
+        The square root is applied because power is proportional to the square of the amplitude. To scale the amplitude to achieve the desired power, you need to take the square root of the ratio of the powers.
+        Without the square root, you'd be adjusting power directly rather than amplitude, which would result in an incorrect adjustment.
+        """
         scaling_factor = np.sqrt((power_2 * self.power_ratio) / power_1)
-        # opposite direction to maintain the power ratio
+        # Step 4: Adjust the gain of the second (music / binaural) audio segment based on the scaling factor.
+        # The scaling factor is converted to a decibel value (dB), which is applied as a gain reduction
+        # to the second segment. The negative sign ensures that the power ratio is maintained.
+        # apply_gain() applies a gain adjustment in decibels to the audio segment.
+        # so because power scaling factor is based on power, we need to convert it to dB
+        # using the formula: 10 * log10(scaling_factor)
+        # the -ve is to reduce the gain of the second (music / binaural) audio segment
         adjusted_audio_segment_2 = stereo_audio_segment_2.apply_gain(-10 * np.log10(scaling_factor))
-        # Combine and normalize the audio segments
         combined = stereo_audio_segment_1.overlay(adjusted_audio_segment_2)
         final_stereo_audio = combined.normalize()
         return final_stereo_audio
@@ -89,7 +112,6 @@ class MP3Mixer:
             raise FileNotFoundError(f"Spoken audio file {spoken_file_a} not found.")
         if not os.path.exists(ambient_file_b):
             raise FileNotFoundError(f"Ambient audio file {ambient_file_b} not found.")
-
         spoken_audio_a = AudioSegment.from_file(spoken_file_a)
         ambient_audio_b = AudioSegment.from_file(ambient_file_b)
         spoken_duration_a = len(spoken_audio_a)
@@ -161,7 +183,7 @@ class MP3Mixer:
             sample_width=audio_array.dtype.itemsize,
             channels=2
         )
-        binaural_segment = binaural_segment.fade_out(self.binaural_fade_out_duration * 10)
+        binaural_segment = binaural_segment.fade_out(self.binaural_fade_out_duration)
         return binaural_segment
 
     def mix_audio(self) -> str:
@@ -184,7 +206,6 @@ class MP3Mixer:
                 raise ValueError("Error: base_freq must be greater than 0.")
             if self.binaural_fade_out_duration < 0:
                 raise ValueError("Error: binaural_fade_out_duration must be greater than or equal to 0.")
-
             binaural_segment = self.generate_binaural_beats(duration)
             if not self.power_ratio:
                 self.power_ratio = 450000 # 300000 # increasing this reduces the binaural beat volume
@@ -197,14 +218,11 @@ class MP3Mixer:
             ambient_files = os.listdir(sounds_dir)
             if not any(file.endswith(".mp3") for file in ambient_files):
                 raise FileNotFoundError(f"Error: {sounds_dir} does not contain any MP3 files.")
-
             ambient_file = ""
             while not ambient_file.endswith(".mp3"):
                 ambient_file = os.path.join(self.sounds_dir, random.choice(ambient_files))
                 print(f"Selected ambient file: {ambient_file}")
                 ambient_file = os.path.join(my_dir, ambient_file)
-
             mixed_audio = self.overlay_ambient(self.mp3_file, ambient_file)
-
         mixed_audio.export(self.output_file, format="mp3")
         return self.output_file
