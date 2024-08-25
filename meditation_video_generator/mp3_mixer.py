@@ -183,7 +183,7 @@ class MP3Mixer:
             sample_width=audio_array.dtype.itemsize,
             channels=2
         )
-        binaural_segment = binaural_segment.fade_out(self.binaural_fade_out_duration)
+        binaural_segment = binaural_segment.fade_out(self.binaural_fade_out_duration*1000)
         return binaural_segment
 
     def mix_audio(self) -> str:
