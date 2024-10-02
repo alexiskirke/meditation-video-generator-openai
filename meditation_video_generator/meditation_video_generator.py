@@ -15,6 +15,10 @@ import requests
 from moviepy.editor import ImageClip, AudioFileClip
 from pedalboard import Pedalboard, Reverb, Gain, LowpassFilter
 from pedalboard.io import AudioFile
+from .visual_prompts_list import visual_prompts
+from elevenlabs.client import ElevenLabs
+from elevenlabs import play, save, VoiceSettings
+import elevenlabs
 
 YELLOW = (255, 255, 0, 255)  # used to build the image text. 100% opaque
 BLUE = [0, 0, 255]  # used to build the image banner background. opacity filled in later.
@@ -37,7 +41,6 @@ class MeditationVideoGenerator:
                  binaural: bool = False,
                  all_voices: bool = False,
                  binaural_fade_out_duration: float = 4,
-                 binaural_file_gain_db: int = -40,
                  start_beat_freq: float = 5,
                  end_beat_freq: float = 0.5,
                  base_freq: float = 110.0,
@@ -52,7 +55,12 @@ class MeditationVideoGenerator:
                  banner_at_bottom: bool = True,
                  banner_height_ratio: float = 0.35,
                  max_banner_words: int = 6,
-                 power_ratio = None
+                 power_ratio = None,
+                 use_legacy_visuals: bool = False,
+                 elevenlabs_key: str = "",
+                 elevenlabs_voice: str = "",
+                 no_technique: bool = False,
+                 use_hypnosis: bool = False,
                  ):
         """
         Initializes the MeditationGenerator with an OpenAI API key.
@@ -76,7 +84,6 @@ class MeditationVideoGenerator:
         :param binaural: If True, generate binaural beats.
         :param all_voices: If True, choose from all available voices.
         :param binaural_fade_out_duration: Duration in seconds of the fade-out at the end of the binaural beats.
-        :param binaural_file_gain_db: How much binaural beats should be quieter than the input voice audio.
         :param start_beat_freq: Initial frequency difference for the binaural effect.
         :param end_beat_freq: Final frequency difference for the binaural effect.
         :param base_freq: Base frequency for the binaural beats.
@@ -92,6 +99,10 @@ class MeditationVideoGenerator:
         :param banner_height_ratio: Ratio of the banner height to the image height.
         :param max_banner_words: Maximum number of words in the banner.
         :param power_ratio: Ratio (higher means louder voice) of the power of the binaural beats or ambient to the power of the voice audio.
+        :param use_legacy_visuals: If True, use the legacy visuals.
+        :param elevenlabs_key: Elevenlabs API key for accessing the speech synthesizer. If not an empty string, ElevenLabs speechsynth will be used intead of OpenAI.
+        :param elevenlabs_voice: Elevenlabs voice to use for speech synthesis (if elevenlabs_key is not an empty string).
+        :param no_technique: If True, do not include the meditation technique (breath, etc) in the meditation.
         """
         # setting any of these to false switches off that part of the pipeline
         self.pipeline: dict[str, bool] = {
@@ -148,7 +159,10 @@ class MeditationVideoGenerator:
         self.limit_parts = limit_parts
         self.balance_odd = balance_odd
         self.balance_even = balance_even
-        self.voice_choices = ['onyx', 'shimmer'] #, 'echo']
+        if not elevenlabs_key:
+            self.voice_choices = ['onyx', 'shimmer'] #, 'echo']
+        else:
+            self.voice_choices = ['Matilda', 'George', 'Brian', 'Charlotte']
         self.two_voices = two_voices
         self.num_loops = num_loops
         if two_voices:
@@ -159,13 +173,20 @@ class MeditationVideoGenerator:
         self.expand_on_section = expand_on_section
         self.image_quality = "standard"  # hd
         self.image_model = "dall-e-3"
+        self.elevenlabs_key = elevenlabs_key
+        self.elevenlabs_voice = elevenlabs_voice
+
         self.api_key = api_key
         self.client = OpenAI(api_key=api_key)
+        if self.elevenlabs_key:
+            print("Using ElevenLabs speechsynth.")
+            self.client11 = ElevenLabs(api_key=self.elevenlabs_key)
         self.model = "gpt-4o"
         self.subsections = []
         self.subsection_audio_files = []
         self.length = length
         self.topic = topic
+        self.use_hypnosis = use_hypnosis
         self.topic_based_filename = self.topic.replace(" ", "_")[:20]  # in case topic too long
         # working directory for storing audio files etc
         self.working_directory = self.topic_based_filename
@@ -206,7 +227,10 @@ class MeditationVideoGenerator:
                                 balance_even=self.balance_even)
         self.bass_boost = bass_boost
         self.beautiful_lady = beautiful_lady
-        self.voice_list = ['onyx', 'shimmer', 'echo', 'alloy', 'fable', 'nova']
+        if not elevenlabs_key:
+            self.voice_list = ['onyx', 'shimmer', 'echo', 'alloy', 'fable', 'nova']     # openai voices
+        else:
+            self.voice_list = ['Callum', 'Charlotte']   # elevenlabs voices
         if force_voice:
             self.voice = force_voice
         elif all_voices:
@@ -232,10 +256,13 @@ class MeditationVideoGenerator:
         self.num_sentences = num_sentences
         self.technique = random.choice(["Watching the breath", "Body sensation", "Watching the thoughts",
                                         "Listening to sounds (but only mention sounds within the meditation track)."])
+        self.no_technique = no_technique
         if affirmations_only:
             output_type = "affirmation"
         else:
             output_type = "meditation"
+        if use_hypnosis:
+            output_type = "guided hypnosis"
         if base_on_text:
             self.prompt = f"""Generate a {output_type} based on the following text. 
             Do not use any contractions at all, for example isn't, there's or we're:\n{text}"""
@@ -248,12 +275,18 @@ class MeditationVideoGenerator:
         Finish with a closing message part which has a conclusion to the {output_type}.
         Break it down into multiple parts which will be read with pauses between them during {output_type}.
         Each part should only contain a thought by you on the topic and finish with a single action request, 
-        but may contain multiple pieces of background information or motivations as well.
-        The action request should be based on the meditation technique '{self.technique}'.
-        THE ACTION SHOULD BE THE LAST SENTENCE OF THE PART! Do not relate the action to the topic, just to the technique.
-        Some may only be reminders to continue the focus on what was instructed a previous part.
-        Do NOT put two actions in one subsection. Do NOT ask the listener to both take an action and consider or think about something!
-        """
+        but may contain multiple pieces of background information or motivations as well."""
+        if not self.no_technique:
+            self.prompt += f"""The action request should be based on the meditation technique '{self.technique}'.
+            Keep the action request limited to this one technique. Do not mix techniques across the whole meditation.
+            THE ACTION SHOULD BE THE LAST SENTENCE OF THE PART! Do not relate the action to the topic, just to the technique.
+            Some may only be reminders to continue the focus on what was instructed a previous part.
+            Do NOT put two actions in one subsection. Do NOT ask the listener to both take an action and consider or think about something!
+            """
+        elif not use_hypnosis:
+            self.prompt += f"""The action request should be a relaxing one, based on the meditation topic.."""
+        else:
+            self.prompt += f"""The action request should be one designed to deepen the state of hypnosis. Ensure the hypnosis actions are consistent and coherent across parts of the procedure."""
         if self.limit_parts > 0:
             if self.limit_parts < 3:
                 self.limit_parts = 3
@@ -270,7 +303,7 @@ class MeditationVideoGenerator:
                                     Insure the details
                                    demonstrate your in-depth knowledge of the section (and topic) and help 
                                    the listener. Do not ask the listener to take actions or consider thoughts in this. \n """
-        if not affirmations_only:
+        if not affirmations_only and not use_hypnosis:
             self.prompt += f"""
             Whatever the topic of the meditation, embed it within the following meditation technique:\n
             {self.technique}. Do not talk about 'think about' or 'consider'.\n
@@ -283,7 +316,7 @@ class MeditationVideoGenerator:
             {"meditation_part_3": "The third part of the meditation text."}
             etc.
         ]
-        Add contextual information for each sentence, such as [careful] or [serious] or [happy] to help humanise the speech.
+        Add ellipsis '...' at the end of some sentences, to help humanise the speech.
         '''
         # repeat the below for emphasis
         if self.limit_parts > 0:
@@ -301,28 +334,35 @@ class MeditationVideoGenerator:
         self.banner_at_bottom = banner_at_bottom
         self.banner_height_ratio = banner_height_ratio
         self.max_banner_words = max_banner_words
-        races = ["white", "black", "asian", "hispanic", "pakistani", "iranian", "pacific islander"]
-        if not self.beautiful_lady:
-            self.image_prompt = f"""
-                Image only. 
-                Generate a beautiful image based on the {output_type} topic '{self.topic}'.
-                It should be relaxing and be photorealistic. 
-                """
-            if random.random() < 0.5:
-                self.image_prompt += " It should include a beautiful person."
-            if random.random() < 0.5:
-                self.image_prompt += " It should be in outer space."
-            elif random.random() < 0.5:
-                self.image_prompt += " It should be under or on the ocean."
-            if random.random() < 0.5:
-                self.image_prompt += " It should be in the style of a random famous painter."
+        #use_legacy_visuals = True
+        if use_legacy_visuals:
+            races = ["white", "black", "asian", "hispanic", "pakistani", "iranian", "pacific islander"]
+            if not self.beautiful_lady:
+                self.image_prompt = f"""
+                    Image only. 
+                    Generate a beautiful image based on the {output_type} topic '{self.topic}'.
+                    It should be relaxing and be photorealistic. 
+                    """
+                if random.random() < 0.5:
+                    self.image_prompt += " It should include a beautiful person."
+                if random.random() < 0.5:
+                    self.image_prompt += " It should be in outer space."
+                elif random.random() < 0.5:
+                    self.image_prompt += " It should be under or on the ocean."
+                if random.random() < 0.5:
+                    self.image_prompt += " It should be in the style of a random famous painter."
+                else:
+                    self.image_prompt += " It should be in the style of a random famous artist."
+                self.image_prompt += " REMEMBER: image only. PHOTOREALISTIC."
             else:
-                self.image_prompt += " It should be in the style of a random famous artist."
-            self.image_prompt += " REMEMBER: image only. PHOTOREALISTIC."
+                self.image_prompt = f"""Generate a beautiful image of a beautiful lady meditating.
+                    It should be relaxing and be photorealistic. Remember: image only.
+                    They should be {random.choice(races)}."""
         else:
-            self.image_prompt = f"""Generate a beautiful image of a beautiful lady meditating.
-                It should be relaxing and be photorealistic. Remember: image only.
-                They should be {random.choice(races)}."""
+            # select a random image prompt from the list
+            self.image_prompt = random.choice(visual_prompts)
+            thumbnailer_prompt = "Ensure that the scene has strong contrast, a clear focal point, and bold, easily distinguishable shapes and colors that will stand out even at a small thumbnail size."
+            self.image_prompt += f"\n{thumbnailer_prompt}"
 
     def send_prompt(self, prompt: str, use_json: bool = False) -> str:
         if prompt.strip() == "":
@@ -417,18 +457,28 @@ class MeditationVideoGenerator:
             raise ValueError("Error: synthesize_speech - Filename must end with .mp3.")
         if not voice:
             voice = self.voice
-        try:
-            # https://stackoverflow.com/questions/77952454/method-in-python-stream-to-file-not-working
-            with self.client.audio.speech.with_streaming_response.create(
-                model=self.engine,
-                voice=voice,
-                input=text
-            ) as response:
-                response.stream_to_file(filename)
 
-        except Exception as e:
-            msg = f"Error: synthesize_speech - OpenAI API call failed for the text: {text}"
-            raise RuntimeError(msg) from e
+        if not self.elevenlabs_key:
+            try:
+                # https://stackoverflow.com/questions/77952454/method-in-python-stream-to-file-not-working
+                with self.client.audio.speech.with_streaming_response.create(
+                    model=self.engine,
+                    voice=voice,
+                    input=text
+                ) as response:
+                    response.stream_to_file(filename)
+            except Exception as e:
+                msg = f"Error: synthesize_speech - OpenAI API call failed for the text: {text}"
+                raise RuntimeError(msg) from e
+        else:
+            elevenlabs_audio = self.client11.generate(
+                text=text,
+                voice=voice,
+                model="eleven_multilingual_v2",
+            )
+            save(elevenlabs_audio, filename)  # save the audio to a file use elevenlabs API
+
+
 
     # second part of the pipeline
     def create_meditation_text_audio_files(self) -> List[str]:
@@ -587,6 +637,7 @@ class MeditationVideoGenerator:
         shutil.copy(filename, base_filename)
         return filename
 
+    # this function keeps increasing the font size until it fills in the desired area
     def find_optimal_font_size_and_wrap(self, text, max_width, max_height, font_path):
         font_size = 1
         lines = []
@@ -599,9 +650,12 @@ class MeditationVideoGenerator:
                 msg += "This is probably because the OS front path has been incorrectly detected by this package."
                 raise OSError(msg)
             # Estimate the number of characters per line
-            avg_char_width = font.getbbox('X')[2]  # Use 'X' to get the width of a capital letter
+            # this gives the width in pixels of letter X (its actually the right hand side x coord)
+            avg_char_width = font.getbbox('X')[2]
+            # (getbox returns a tuple of 4 values, x1, y1, x2, y2)
+            # divided total box width available by X width in pixels to get max chars per line
             max_chars_per_line = max(1, int(max_width / avg_char_width))
-            # Wrap text
+            # Wrap text to avoid going over max chars per line
             wrapped_lines = textwrap.wrap(text, width=max_chars_per_line)
             # Calculate total height
             line_height = font.getbbox('X')[3]  # Use 'X' to get the height of a capital letter
@@ -610,7 +664,7 @@ class MeditationVideoGenerator:
                 font_size -= 1
                 font = ImageFont.truetype(font_path, font_size)
                 break
-            font_size += 1
+            font_size += 1  # try a larger font
             lines = wrapped_lines
         return font, lines
 
@@ -627,7 +681,6 @@ class MeditationVideoGenerator:
         if not os.path.exists(image_path):
             msg = f"Error: add_banner_with_text - Image file does not exist: {image_path}"
             raise FileNotFoundError(msg)
-
         # if it fails to load image now, assume that is not a valid image file
         try:
             image = Image.open(image_path)
@@ -646,19 +699,18 @@ class MeditationVideoGenerator:
             raise ValueError(msg)
         # Convert text to uppercase for the banner
         text = banner_text.upper()
-
         # Calculate the gap size (2.5% of the image height and width)
+        # this is the gap between the banner and the image edges
         gap_size = int(height * 0.025)
-
-        # Calculate the banner height (e.g. 25% of the image height) minus gaps
+        # Calculate the banner height (e.g. 25% of the image height) minus gaps top and bottom
         banner_height = int(height * self.banner_height_ratio) - 2 * gap_size
-
         # check self.banner_height_ratio doesn't make banner height <= 0
         if banner_height <= 0:
             msg = f"Error: add_banner_with_text - Banner height too small: {banner_height}"
             msg += f"\nCheck self.banner_height_ratio value: {self.banner_height_ratio}"
             raise ValueError(msg)
         # Calculate the banner width minus gaps
+        # image widtg minus gaps left and right
         banner_width = width - 2 * gap_size
         # check banner width > 0
         if banner_width <= 0:
@@ -666,10 +718,13 @@ class MeditationVideoGenerator:
             msg += f"\nCheck image width: {width}"
             raise ValueError(msg)
         # Create a drawing context
-        draw = ImageDraw.Draw(image, "RGBA")
+        draw = ImageDraw.Draw(image, "RGBA")  # Use RGBA to support transparency
         background_colour = tuple(BLUE + [int(self.opacity * 255)])
         # Define the banner area (black rectangle with gaps around it)
         if self.banner_at_bottom:
+            # coordinates are:
+            # top left: (gap_size, height - banner_height - gap_size)
+            # bottom right: (gap_size + banner_width, height - gap_size)
             banner_area = [(gap_size, height - banner_height - gap_size), (gap_size + banner_width, height - gap_size)]
         else:
             banner_area = [(gap_size, gap_size), (gap_size + banner_width, gap_size + banner_height)]
@@ -696,7 +751,7 @@ class MeditationVideoGenerator:
         # Find optimal font size and wrap text
         font, lines = self.find_optimal_font_size_and_wrap(text, banner_width, banner_height, font_path)
         # Calculate total text height
-        line_height = font.getbbox('X')[3]
+        line_height = font.getbbox('X')[3]  # finds the height of a capital letter X pixels
         total_text_height = line_height * len(lines)
         if self.banner_at_bottom:
             y_position = height - banner_height - gap_size + (banner_height - total_text_height) * 0.4
@@ -711,10 +766,14 @@ class MeditationVideoGenerator:
         # Add each line of text to the banner
         for line in lines:
             text_width = font.getbbox(line)[2]
+            # the start point is: move right past the gap, then move the distance between
+            # the edge of the banner and the start of the text.
+            # banner_width - text_width is the space either side of the text
+            # not including the gapsize between the banner edge and the image edge
             x_position = gap_size + (banner_width - text_width) / 2
-            draw.text((x_position, y_position), line, fill=YELLOW,
-                      font=font)
-            y_position += line_height
+            # draw object is pointing to the loaded image
+            draw.text((x_position, y_position), line, fill=YELLOW, font=font)
+            y_position += line_height # not line height is not the height of X but the height of bounding box of X
         # check for valid output path
         if not os.path.exists(os.path.dirname(output_path)):
             msg = f"Error: add_banner_with_text - Output directory does not exist: {output_path}"

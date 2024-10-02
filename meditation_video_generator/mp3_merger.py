@@ -83,43 +83,35 @@ class MP3Merger:
             raise ValueError("Balance for even segments must be between -1 and 1.")
         if self.balance_odd < -1 or self.balance_odd > 1:
             raise ValueError("Balance for odd segments must be between -1 and 1.")
-
         # Adds silences into spoken word files if spread_out is True
         if self.spread_out:
             self.spread_out_all_files()
-
         # Load all MP3 files and calculate their total duration
         segments = [AudioSegment.from_mp3(file) for file in self.mp3_files]
         total_duration = sum(segment.duration_seconds for segment in segments)
-
         # Ensure the target duration is at least as large as the total duration of all MP3 files
         if total_duration > self.duration:
             raise ValueError(
                 f"Total duration of segments: {total_duration} seconds, target duration: {self.duration} seconds. Total duration of input MP3 files exceeds the target duration.")
-
         # Calculate the total silence duration needed
         total_silence_duration = self.duration - total_duration
         # not len(segments) + 1
         silence_duration = total_silence_duration / len(segments) if len(segments) > 1 else total_silence_duration
         silence_segment = AudioSegment.silent(duration=silence_duration * 1000)  # Convert seconds to milliseconds
-
-        # Apply balance to each segment
+        # Apply stereo balance to each segment
         for i, segment in enumerate(segments):
             if i % 2 == 0:
                 segments[i] = segment.pan(self.balance_even)  # Apply even balance
             else:
                 segments[i] = segment.pan(self.balance_odd)  # Apply odd balance
-
-        # Create the final merged audio segment
-        final_segment = AudioSegment.silent(duration=self.front_buffer) + segments[0]
+        # Create the merged audio segment
+        merged_segment = AudioSegment.silent(duration=self.front_buffer) + segments[0]
         for segment in segments[1:]:
-            final_segment += silence_segment + segment
-
-        final_segment += AudioSegment.silent(duration=silence_duration * 1000) + AudioSegment.silent(
-            duration=self.front_buffer)
-
+            merged_segment += silence_segment + segment
+        merged_segment += AudioSegment.silent(duration=silence_duration * 1000) + AudioSegment.silent(
+            duration=self.rear_buffer)
         # Export the final merged audio segment to an MP3 file
-        final_segment.export(self.output_file, format="mp3")
+        merged_segment.export(self.output_file, format="mp3")
         return self.output_file
 
     def spread_out_phrases(self, filename: str) -> tuple[int, int]:
@@ -127,7 +119,6 @@ class MP3Merger:
         Loads an MP3 file and spreads out the phrases by adding silence between them.
 
         :param filename: Path to the input MP3 file.
-
         :return: Tuple containing the old and new file lengths in milliseconds.
         """
         # Load the audio file
@@ -140,10 +131,8 @@ class MP3Merger:
             min_silence_len=self.min_silence_len,  # Minimum length of silence between words (ms)
             silence_thresh=self.silence_thresh  # Consider anything quieter than -50 dBFS as silence
         )
-
         # Create a new audio segment with silence
         random_dev = self.silence_add // 3  # Add some randomness to the silence duration
-
         # Spread out the words by adding silence between them
         spread_audio = chunks[0]
         for chunk in chunks[1:]:
@@ -151,15 +140,12 @@ class MP3Merger:
                 duration=self.silence_add -
                          random_dev + random.randint(0, random_dev * 2))  # Add some randomness to the silence duration
             spread_audio += silence + chunk
-
         # Rename filename with _original added
         base_name = os.path.splitext(os.path.basename(filename))[0]
         new_filename = f"{base_name}_original.mp3"
-
         # Rename the original file
         os.rename(filename, new_filename)
         new_file_length = len(spread_audio)
-
         # Export the new audio file
         spread_audio.export(filename, format="mp3")
         return old_file_length, new_file_length

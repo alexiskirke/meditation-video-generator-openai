@@ -208,7 +208,7 @@ class MP3Mixer:
                 raise ValueError("Error: binaural_fade_out_duration must be greater than or equal to 0.")
             binaural_segment = self.generate_binaural_beats(duration)
             if not self.power_ratio:
-                self.power_ratio = 450000 # 300000 # increasing this reduces the binaural beat volume
+                self.power_ratio = 350000 # increasing this reduces the binaural beat volume (450000 is too quiet binaural)
             mixed_audio = self.adjust_power_overlay_and_normalise(input_audio, binaural_segment)
         else:
             my_dir = os.path.dirname(os.path.realpath(__file__))
