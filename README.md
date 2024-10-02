@@ -29,7 +29,8 @@ Sometimes a perfectly innocent meditation topic can trigger OpenAI's content fil
 
 - `topic: str` - The topic of the meditation.
 - `length: float` - The length of the meditation in minutes.
-- `api_key: str` - OpenAI API key for accessing the speech synthesizer.
+- `elevenlabs_key: str` - The ElevenLabs API key for generating voices. If empty, then uses OpenAI.
+- `api_key: str` - OpenAI API key for accessing the text generation and speech synthesizer.
 - `base_on_text: bool` - If True, generate a meditation based on (but not consisting only of) the provided text.
 - `text: str` - Text to generate the meditation from.
 - `num_sentences: int` - Number of sentences in each part of the meditation.
@@ -60,25 +61,29 @@ Sometimes a perfectly innocent meditation topic can trigger OpenAI's content fil
 - `banner_height_ratio: float` - Ratio of the banner height to the image height.
 - `max_banner_words: int` - Maximum number of words in the banner.
 - `power_ratio: float` - Ratio (higher means louder voice) of the power of the binaural beats or ambient to the power of the voice audio.
+- `use_legacy_visuals: bool` - This version has a new image generation system which is not controlled by the topic defined. Default is False. If True use the old version visuals, which is controlled by the user-defined topic.
+- `use_hypnosis: bool` - Default False. If true focus on hypnosis style meditations.
 
 ### Example Usages
 
-The following will generate a 10-minute meditation video with audio and a fixed image inspired by the Shire from Lord of the Rings, with approximately 7 sentences per meditation segment:
+The following will generate a 10-minute meditation video with ambient music, ElevenLabs voice audio and a fixed image inspired by the Shire from Lord of the Rings, with approximately 7 sentences per meditation segment:
 ```python
 from meditation_video_generator import MeditationVideoGenerator
 
 # Initialize the meditation video generator
 mvg = MeditationVideoGenerator(length=10, api_key="YOUR_API_KEY",
+                               elevenlabs_key="YOUR_ELEVENLABS_KEY",
                                topic="""A calming stroll through Hobbiton in the Shire""",
                                binaural=False,
                                num_sentences=7, 
-                               bass_boost=True)
+                               bass_boost=True,
+                               use_legacy_visuals=True)
 subsections, video_filename = mvg.run_meditation_pipeline()
 # subsections is a list of the generated meditation texts
 # video_filename is the path to the generated meditation video
 ```
 
-Generate a 5-minute meditation video with binaural beats and more detailed wordings. The binaural base frequency is 220Hz and over the 5 minutes the beat frequency will reduce from 32Hz to 2Hz:
+Generate a 5-minute meditation video with binaural beats, OpenAI voices and more detailed wordings. The binaural base frequency is 220Hz and over the 5 minutes the beat frequency will reduce from 32Hz to 2Hz:
 ```python
 from meditation_video_generator import MeditationVideoGenerator
 
@@ -108,6 +113,7 @@ Generate a 20-minute affirmation video just repeating the phrase "I am a good pe
 from meditation_video_generator import MeditationVideoGenerator
 
 mvg = MeditationVideoGenerator(length=20, api_key="YOUR_API_KEY",
+                               elevenlabs_key="YOUR_ELEVENLABS_KEY",
                                topic="I am a good person who deserves good things",
                                num_loops=200)
 subsections, video_filename = mvg.run_meditation_pipeline(
@@ -116,6 +122,7 @@ subsections, video_filename = mvg.run_meditation_pipeline(
 
 Generate a 5-minute affirmation video directly from the provided text.
 Use two different voices for odd and even parts of the meditation with one voice on the left and the other on the right.
+The image will use the old image generation algorithm, which means it will be based on the topic.
 Note the double newlines in the content string:
 ```python
 from meditation_video_generator import MeditationVideoGenerator
@@ -125,7 +132,8 @@ mvg = MeditationVideoGenerator(length=5, api_key="YOUR_API_KEY",
                                topic="A beautiful poem",
                                two_voices=True,
                                balance_even=-0.85,
-                               balance_odd=0.85)
+                               balance_odd=0.85,
+                               use_legacy_visuals=True)
 subsections, video_filename = mvg.run_meditation_pipeline(
     content = """Do not stand at my grave and weep
 

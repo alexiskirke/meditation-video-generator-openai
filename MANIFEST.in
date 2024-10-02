@@ -5,6 +5,7 @@ exclude meditation_video_generator/.gitattributes
 exclude test_meditation_video_generator.py
 exclude test_mp3_merger.py
 exclude test_mp3_mixer.py
+exclude temp_generator_main.py
 exclude venv/
 exclude live/
 exclude archive/
